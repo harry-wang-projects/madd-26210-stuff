@@ -1,0 +1,358 @@
+import pygame
+import sys
+import math
+import time
+from io import BytesIO
+import requests
+
+# -----------------------------
+# Config
+# -----------------------------
+GRID_W = 100
+GRID_H = 100
+BOX_SIZE = 8
+SCREEN_W = GRID_W * BOX_SIZE
+SCREEN_H = GRID_H * BOX_SIZE
+
+BG_PIXEL_BLEND = True
+CUBE_COLOR = (255, 255, 255)
+CUBE_EDGE = (20, 20, 20)
+
+FPS = 60
+
+# How “pixelated” the cube should feel (shade blocks)
+FACE_BRIGHT = (240, 240, 240)
+FACE_DARK = (140, 140, 140)
+FACE_MID = (190, 190, 190)
+
+# Cube size in grid units (so it covers a few boxes)
+CUBE_GRID_SIZE = 1.0  # 1 box = 16 px
+
+# Cube movement tuning
+MOVE_LERP = True  # smooth within each step
+
+
+# -----------------------------
+# Helper: download + scale backdrop into pixelated grid
+# -----------------------------
+def load_backdrop_from_url(url, w_boxes, h_boxes, box_size):
+    """
+    Loads an image from a URL, then:
+      - scales it to (w_boxes * box_size, h_boxes * box_size)
+      - returns both:
+          * a smooth scaled surface for internal use
+          * a pixelated version quantized to box-level blocks
+    """
+    #resp = requests.get(url, timeout=20)
+    #resp.raise_for_status()
+    #img_data = BytesIO(resp.content)
+
+    img = pygame.image.load("./uchicago_map.png").convert()
+    # Scale to exact canvas size
+    smooth = pygame.transform.smoothscale(img, (w_boxes * box_size, h_boxes * box_size))
+
+    # Pixelate: for each grid box, take a representative color
+    pixelated = pygame.Surface((w_boxes * box_size, h_boxes * box_size)).convert()
+    pixelated = pixelated.convert()
+
+    for gy in range(h_boxes):
+        for gx in range(w_boxes):
+            # Sample from center of the corresponding box
+            sx = gx * box_size + box_size // 2
+            sy = gy * box_size + box_size // 2
+            color = smooth.get_at((sx, sy))
+            rect = pygame.Rect(gx * box_size, gy * box_size, box_size, box_size)
+            pygame.draw.rect(pixelated, color, rect)
+
+    return smooth, pixelated
+
+
+def blend_pixelated_backdrop(surf_pixelated):
+    """
+    Optional subtle blending to make it feel more integrated.
+    Here we just return the pixelated surface as-is, but you could
+    add dithering/glow/etc.
+    """
+    return surf_pixelated
+
+
+# -----------------------------
+# Cube rendering (simple isometric-ish block)
+# -----------------------------
+def draw_cube(screen, grid_x, grid_y, cube_grid_size=1.0, height=2.0):
+    """
+    Draws a cube centered on grid position (grid_x, grid_y) in screen space.
+    We render a stylized 3-face cube using simple shading blocks.
+
+    grid_x, grid_y are in grid units (0..49).
+    height controls the “stacked” feel (in boxes).
+    """
+    # Place cube base at the top-left corner of the box cell.
+    # We’ll treat (grid_x, grid_y) as the cell origin.
+    px = grid_x * BOX_SIZE
+    py = grid_y * BOX_SIZE
+
+    s = cube_grid_size * BOX_SIZE
+    # “height” in pixels
+    h = height * (BOX_SIZE * 0.35)  # stylized
+
+    # Iso projection (simple): top face offset & side faces
+    # Tune offsets for your aesthetic:
+    off_x = BOX_SIZE * 0.35
+    off_y = BOX_SIZE * 0.20
+
+    # Define key points
+    # Base corners (projected)
+    # We'll create a diamond-like top and then sides downward.
+    top = [
+        (px + off_x, py),                 # top-left
+        (px + s + off_x, py),             # top-right
+        (px + s + off_x + off_x, py + off_y),  # top-far-right
+        (px + off_x + off_x, py + off_y)      # top-far-left
+    ]
+
+    # Bottom corners are top corners moved down by h
+    bottom = [(x, y + h) for (x, y) in top]
+
+    # Faces:
+    # We'll approximate faces by polygons:
+    face_top = [top[0], top[1], top[2], top[3]]
+    face_left = [top[0], top[3], bottom[3], bottom[0]]
+    face_right = [top[1], top[2], bottom[2], bottom[1]]
+
+    # Draw order: left, right, top (or top last for nicer overlap)
+    #pygame.draw.polygon(screen, FACE_DARK, face_left)
+    #pygame.draw.polygon(screen, FACE_MID, face_right)
+    #pygame.draw.polygon(screen, FACE_BRIGHT, face_top)
+
+    # Edges
+    #pygame.draw.polygon(screen, CUBE_EDGE, face_top, 1)
+    #pygame.draw.polygon(screen, CUBE_EDGE, face_left, 1)
+    #pygame.draw.polygon(screen, CUBE_EDGE, face_right, 1)
+    pygame.draw.rect(screen, (0, 255, 0), (px, py, 16, 16) )
+
+# -----------------------------
+# Movement function: move in a line
+# -----------------------------
+class LineMover:
+    """
+    Moves a point (cube) from one grid cell to another along a line.
+    - total_time: total duration for the move
+    - steps_per_second: how many discrete steps you take (positions update)
+    Each step advances the cube by a fixed fraction and optionally renders smoothly.
+    """
+
+    def __init__(self, start_cell, end_cell, total_time, steps_per_second=10, grid_snap=False):
+        self.start = start_cell
+        self.end = end_cell
+        self.total_time = max(0.0001, float(total_time))
+        self.steps_per_second = steps_per_second
+        self.grid_snap = grid_snap
+
+        self.t0 = None
+        self.done = False
+
+        self.steps = max(1, int(self.total_time * self.steps_per_second))
+        self.current_step = 0
+
+        self.x0, self.y0 = self.start
+        self.x1, self.y1 = self.end
+
+        # Precompute per-step increments
+        self.dx = (self.x1 - self.x0) / self.steps
+        self.dy = (self.y1 - self.y0) / self.steps
+
+        # Current position (float)
+        self.x = float(self.x0)
+        self.y = float(self.y0)
+
+    def begin(self):
+        self.t0 = time.perf_counter()
+        self.done = False
+        self.current_step = 0
+        self.x = float(self.x0)
+        self.y = float(self.y0)
+
+    def update(self):
+        if self.done:
+            return (self.x, self.y)
+
+        if self.t0 is None:
+            self.begin()
+
+        now = time.perf_counter()
+        elapsed = now - self.t0
+
+        # Determine target progress
+        progress = min(1.0, elapsed / self.total_time)
+
+        # Option A: smooth interpolation
+        if MOVE_LERP:
+            x = self.x0 + (self.x1 - self.x0) * progress
+            y = self.y0 + (self.y1 - self.y0) * progress
+        else:
+            # Option B: discrete step interpolation
+            step_float = progress * self.steps
+            step_idx = min(self.steps, int(step_float))
+            x = self.x0 + self.dx * step_idx
+            y = self.y0 + self.dy * step_idx
+
+        # Optional snap to grid cell centers
+        if self.grid_snap:
+            x = round(x)
+            y = round(y)
+
+        self.x, self.y = x, y
+        self.done = (progress >= 1.0)
+
+        return (self.x, self.y)
+
+
+def move_cube_line(start_cell, end_cell, time_per_move, steps_per_second=10, grid_snap=False):
+    """
+    Requested function:
+    - move in a line from one position to another
+    - takes a certain amount of time each step/move
+    This returns a LineMover you can update each frame.
+    """
+    mover = LineMover(
+        start_cell=start_cell,
+        end_cell=end_cell,
+        total_time=time_per_move,
+        steps_per_second=steps_per_second,
+        grid_snap=grid_snap
+    )
+    mover.begin()
+    return mover
+
+
+# -----------------------------
+# Main
+# -----------------------------
+def main(backdrop_url):
+    pygame.init()
+    screen = pygame.display.set_mode((SCREEN_W, SCREEN_H))
+    pygame.display.set_caption("Pixel Grid Cube Movement")
+    clock = pygame.time.Clock()
+
+    # Load + pixelate backdrop
+    try:
+        _, pixel_bg = load_backdrop_from_url(backdrop_url, GRID_W, GRID_H, BOX_SIZE)
+    except Exception as e:
+        print("Failed to load backdrop image. Error:")
+        print(e)
+        pygame.quit()
+        sys.exit(1)
+
+    pixel_bg = blend_pixelated_backdrop(pixel_bg)
+
+    # Initial cube position (grid cell coordinates)
+    cube_cell = (5, 5)
+    cube_x, cube_y = float(cube_cell[0]), float(cube_cell[1])
+
+    # Example path: a loop around the grid corners-ish
+    # You can replace this with your own path.
+    path = [
+        (5, 5), (45, 5), (45, 45), (5, 45), (5, 5),
+        (25, 10), (40, 30), (10, 35), (25, 20)
+    ]
+
+    path_index = 0
+    mover = None
+
+    # Create first mover (move from current to next)
+    def start_next_move():
+        nonlocal path_index, mover
+        start = path[path_index]
+        end = path[(path_index + 1) % len(path)]
+
+        # Keep cube within bounds (defensive)
+        sx = max(0, min(GRID_W - 1, start[0]))
+        sy = max(0, min(GRID_H - 1, start[1]))
+        ex = max(0, min(GRID_W - 1, end[0]))
+        ey = max(0, min(GRID_H - 1, end[1]))
+
+        start = (sx, sy)
+        end = (ex, ey)
+
+        # Move time per move (you can change)
+        mover = move_cube_line(
+            start_cell=start,
+            end_cell=end,
+            time_per_move=1.25,      # seconds
+            steps_per_second=12,
+            grid_snap=False
+        )
+        path_index = (path_index + 1) % len(path)
+
+    start_next_move()
+
+    # Precompute a faint grid overlay for "pixelated environment"
+    grid_overlay = pygame.Surface((SCREEN_W, SCREEN_H), pygame.SRCALPHA)
+    for y in range(GRID_H):
+        for x in range(GRID_W):
+            # subtle vertical/horizontal feel
+            rect = pygame.Rect(x * BOX_SIZE, y * BOX_SIZE, BOX_SIZE, BOX_SIZE)
+            # very faint lines / dots
+            pygame.draw.rect(grid_overlay, (0, 0, 0, 12), rect, 1)
+
+    running = True
+    while running:
+        dt = clock.tick(FPS) / 1000.0
+
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                running = False
+
+            # Optional: space triggers a random move
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_SPACE:
+                    # start random destination
+                    sx = int(round(cube_x))
+                    sy = int(round(cube_y))
+                    ex = pygame.random.randint(0, GRID_W - 1) if hasattr(pygame, "random") else None
+
+                    # pygame.random doesn't exist in vanilla pygame; fallback:
+                    if ex is None:
+                        ex = pygame.math.Vector2(0, 0).x  # dummy
+                    # Use Python's random safely
+                    import random
+                    ex = random.randint(0, GRID_W - 1)
+                    ey = random.randint(0, GRID_H - 1)
+                    ex = max(0, min(GRID_W - 1, ex))
+                    ey = max(0, min(GRID_H - 1, ey))
+                    start = (max(0, min(GRID_W - 1, sx)), max(0, min(GRID_H - 1, sy)))
+                    end = (ex, ey)
+                    mover = move_cube_line(start, end, time_per_move=1.0, steps_per_second=12, grid_snap=False)
+
+        # Update cube position
+        if mover is not None:
+            cube_x, cube_y = mover.update()
+            if mover.done:
+                start_next_move()
+
+        # Draw
+        screen.blit(pixel_bg, (0, 0))
+        if BG_PIXEL_BLEND:
+            screen.blit(grid_overlay, (0, 0))
+
+        # Draw cube aligned to grid cells; cube_x/cube_y are floats in grid space
+        # We’ll subtract half cube size for better centering.
+        draw_cube(screen, cube_x - (CUBE_GRID_SIZE - 1.0) * 0.5, cube_y - (CUBE_GRID_SIZE - 1.0) * 0.5, cube_grid_size=CUBE_GRID_SIZE, height=2.0)
+
+        pygame.display.flip()
+
+    pygame.quit()
+
+
+if __name__ == "__main__":
+    # Provide your backdrop image URL here:
+    # Example:
+    #   https://example.com/image.png
+    if len(sys.argv) >= 2:
+        url = sys.argv[1]
+    else:
+        # If you want, replace this with a real URL so it runs immediately.
+        url = "https://images.unsplash.com/photo-1500530855697-b586d89ba3ee?auto=format&fit=crop&w=800&q=80"
+
+    main(url)
