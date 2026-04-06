@@ -116,7 +116,6 @@ def draw_trajectory(screen, trajectory_points, box_size, color, alpha):
 
         # Use the trajectory color with calculated alpha
         faded_color = (*color, point_alpha)
-        print(rect)
         pygame.draw.rect(trail_surface, color, rect)
 
     # Blit the trail surface onto the main screen
@@ -227,6 +226,20 @@ def main(backdrop_url):
     pygame.display.set_caption("Pixel Grid Cube Movement")
     clock = pygame.time.Clock()
 
+    running = True
+
+    while running:
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                running = False
+            # Detect KEYDOWN events and print cube coordinates
+            if event.type == pygame.KEYDOWN:
+                running = False
+            
+            pygame.display.flip()
+
+
+
     # Load + pixelate backdrop
     try:
         _, pixel_bg = load_backdrop_from_url(backdrop_url, GRID_W, GRID_H, BOX_SIZE)
@@ -249,8 +262,8 @@ def main(backdrop_url):
     # Example path: a loop around the grid corners-ish
     # You can replace this with your own path.
     path = [
-        (40, 92), (30, 92), (30, 55), (35, 55), 
-        (35, 40), (30, 40), (30, 92), (40, 92)
+        (40, 92), (30, 92), (30, 55), (40, 55), 
+        (40, 50), (40, 55), (30, 55), (30, 92), (40, 92)
     ]
 
     path_index = 0
@@ -270,10 +283,9 @@ def main(backdrop_url):
 
         start = (sx, sy)
         end = (ex, ey)
-        move_timeneeded = (ey - sy + ex - sx) * 0.5
+        move_timeneeded = (ey - sy + ex - sx) * 0.1
         if move_timeneeded < 0:
             move_timeneeded = -move_timeneeded
-        print(move_timeneeded)
 
         # Move time per move (you can change)
         mover = move_cube_line(
@@ -296,13 +308,28 @@ def main(backdrop_url):
             # very faint lines / dots
             pygame.draw.rect(grid_overlay, (0, 0, 0, 12), rect, 1)
 
+
     running = True
+
     while running:
         dt = clock.tick(FPS) / 1000.0
 
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 running = False
+            # Detect KEYDOWN events and print cube coordinates
+            if event.type == pygame.KEYDOWN:
+                # Get current cube grid coordinates
+                grid_x = round(cube_x)
+                grid_y = round(cube_y)
+                pixel_x = int(grid_x * BOX_SIZE)
+                pixel_y = int(grid_y * BOX_SIZE)
+    
+                # Print coordinates with key information
+                key_name = pygame.key.name(event.key)
+                print(f"KEYDOWN: '{key_name}' (key code: {event.key}) | "
+                    f"Grid: ({grid_x}, {grid_y}) | "
+                    f"Pixel: ({pixel_x}, {pixel_y})")
 
         # Update cube position
         if mover is not None:
@@ -328,13 +355,10 @@ def main(backdrop_url):
 
         # Draw trajectory trail (subtle, behind the cube)
         draw_trajectory(screen, trajectory, BOX_SIZE, TRAJECTORY_COLOR, TRAJECTORY_ALPHA)
-        print(trajectory)
 
         # Draw cube aligned to grid cells; cube_x/cube_y are floats in grid space
         # We'll subtract half cube size for better centering.
         draw_cube(screen, cube_x - (CUBE_GRID_SIZE - 1.0) * 0.5, cube_y - (CUBE_GRID_SIZE - 1.0) * 0.5, cube_grid_size=CUBE_GRID_SIZE, height=2.0)
-        print("cube:")
-        print((cube_x, cube_y))
 
         pygame.display.flip()
 
