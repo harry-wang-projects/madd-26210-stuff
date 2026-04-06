@@ -221,13 +221,17 @@ def main(backdrop_url):
 
         start = (sx, sy)
         end = (ex, ey)
+        move_timeneeded = (ey - sy + ex - sx) * 0.1
+        if move_timeneeded < 0:
+            move_timeneeded = -move_timeneeded
+        print(move_timeneeded)
 
         # Move time per move (you can change)
         mover = move_cube_line(
             start_cell=start,
             end_cell=end,
-            time_per_move=4,      # seconds
-            steps_per_second=speed,
+            time_per_move=move_timeneeded,      # seconds
+            steps_per_second=12,
             grid_snap=False
         )
         path_index = (path_index + 1) % len(path)
