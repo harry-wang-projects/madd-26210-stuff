@@ -21,7 +21,7 @@ CUBE_EDGE = (20, 20, 20)
 FPS = 60
 
 # Cube size in grid units
-CUBE_GRID_SIZE = 1.0
+CUBE_GRID_SIZE = 2.0
 
 # Trajectory settings
 TRAJECTORY_COLOR = (100, 255, 100)
@@ -72,9 +72,9 @@ def blend_pixelated_backdrop(surf_pixelated):
 def draw_cube(screen, grid_x, grid_y, cube_grid_size=1.0, height=2.0):
     px = math.ceil(grid_x) * BOX_SIZE
     py = math.ceil(grid_y) * BOX_SIZE
-    pygame.draw.rect(screen, (0, 200, 100), (px, py, BOX_SIZE, BOX_SIZE))
+    pygame.draw.rect(screen, (0, 200, 100), (px, py, BOX_SIZE*2, BOX_SIZE*2))
     # Add a bright center for visibility
-    pygame.draw.rect(screen, (150, 255, 150), (px+2, py+2, BOX_SIZE-4, BOX_SIZE-4))
+    pygame.draw.rect(screen, (150, 255, 150), (px+2, py+2, BOX_SIZE*2-4, BOX_SIZE*2-4))
 
 
 # -----------------------------
@@ -92,18 +92,18 @@ def draw_trajectory(screen, trajectory_points, box_size, color, alpha):
     
     for i, (gx, gy) in enumerate(trajectory_points):
         # Fade older points
-        age_ratio = i / len(trajectory_points) if len(trajectory_points) > 1 else 1.0
-        point_alpha = int(alpha * (0.3 + 0.7 * age_ratio))
+        #age_ratio = i / len(trajectory_points) if len(trajectory_points) > 1 else 1.0
+        #point_alpha = int(alpha * (0.3 + 0.7 * age_ratio))
         
         px = int(gx * box_size)
         py = int(gy * box_size)
         
         size = max(2, box_size - 2)
         offset = (box_size - size) // 2
-        rect = pygame.Rect(px + offset, py + offset, size, size)
+        rect = pygame.Rect(px, py, box_size * 2, box_size * 2)
         
-        faded_color = (*color, point_alpha)
-        pygame.draw.rect(trail_surface, faded_color, rect)
+        #faded_color = (*color, point_alpha)
+        pygame.draw.rect(trail_surface, color, rect)
     
     screen.blit(trail_surface, (0, 0))
 
@@ -203,7 +203,7 @@ def main(backdrop_url):
     mode = MODE_RECORD
     
     # Recording state
-    cube_cell = (GRID_W // 2, GRID_H // 2)
+    cube_cell = (40, 90)
     cube_x, cube_y = float(cube_cell[0]), float(cube_cell[1])
     recorded_path = [cube_cell]  # Start with initial position
     current_mover = None
@@ -258,13 +258,21 @@ def main(backdrop_url):
                 if mode == MODE_RECORD and input_cooldown <= 0:
                     dx, dy = 0, 0
                     if event.key == pygame.K_UP:
-                        dy = -1
+                        dy = -2
                     elif event.key == pygame.K_DOWN:
-                        dy = 1
+                        dy = 2
                     elif event.key == pygame.K_LEFT:
-                        dx = -1
+                        dx = -2
                     elif event.key == pygame.K_RIGHT:
-                        dx = 1
+                        dx = 2
+                    elif event.key == pygame.K_w:
+                        dy = -6
+                    elif event.key == pygame.K_s:
+                        dy = 6
+                    elif event.key == pygame.K_a:
+                        dx = -6
+                    elif event.key == pygame.K_d:
+                        dx = 6
                     
                     if dx != 0 or dy != 0:
                         current_cell = (round(cube_x), round(cube_y))
