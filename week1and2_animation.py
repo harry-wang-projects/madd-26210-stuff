@@ -26,6 +26,11 @@ CUBE_GRID_SIZE = 1.0  # 1 box = 16 px
 # Cube movement tuning
 MOVE_LERP = True  # smooth within each step
 
+# Trajectory settings - subtle trail effect
+TRAJECTORY_COLOR = (100, 255, 100)  # Muted blue-gray, less obvious than white
+TRAJECTORY_ALPHA = 100  # Very subtle transparency
+MAX_TRAIL_LENGTH = 500  # Limit how many past positions to keep (prevents memory bloat)
+
 # -----------------------------
 # Helper: download + scale backdrop into pixelated grid
 # -----------------------------
@@ -76,7 +81,47 @@ def blend_pixelated_backdrop(surf_pixelated):
 def draw_cube(screen, grid_x, grid_y, cube_grid_size=1.0, height=2.0):
     px = math.ceil(grid_x) * BOX_SIZE
     py = math.ceil(grid_y) * BOX_SIZE
-    pygame.draw.rect(screen, (0, 255, 0), (px, py, 16, 16) )
+    pygame.draw.rect(screen, (0, 150, 0), (px, py, 16, 16) )
+
+
+# -----------------------------
+# Trajectory rendering
+# -----------------------------
+def draw_trajectory(screen, trajectory_points, box_size, color, alpha):
+    """
+    Draw the trajectory trail - past positions the cube occupied.
+    Uses small subtle dots or squares at each grid position.
+    """
+    if len(trajectory_points) < 2:
+        return
+
+    # Create a surface for alpha blending
+    trail_surface = pygame.Surface((SCREEN_W, SCREEN_H), pygame.SRCALPHA)
+
+    # Draw each past position as a small filled rectangle
+    # Older positions get slightly more transparent for fade effect
+    for i, (gx, gy) in enumerate(trajectory_points):
+        # Calculate fade based on age (older = more faded)
+        age_ratio = i / len(trajectory_points) if len(trajectory_points) > 1 else 1.0
+        point_alpha = int(alpha)  # Newer points are more visible
+
+        px = int(gx * box_size)
+        py = int(gy * box_size)
+
+        # Draw a small square at each grid position (slightly smaller than grid cell)
+        size = max(2, box_size * 2)
+        offset = ((box_size * 2) - size) // 2
+        rect = pygame.Rect(px, py, size, size)
+
+
+        # Use the trajectory color with calculated alpha
+        faded_color = (*color, point_alpha)
+        print(rect)
+        pygame.draw.rect(trail_surface, color, rect)
+
+    # Blit the trail surface onto the main screen
+    screen.blit(trail_surface, (0, 0))
+
 
 # -----------------------------
 # Movement function: move in a line
@@ -197,6 +242,10 @@ def main(backdrop_url):
     cube_cell = (5, 5)
     cube_x, cube_y = float(cube_cell[0]), float(cube_cell[1])
 
+    # Trajectory history - stores all past grid positions
+    trajectory = []
+    last_recorded_pos = None
+
     # Example path: a loop around the grid corners-ish
     # You can replace this with your own path.
     path = [
@@ -221,7 +270,7 @@ def main(backdrop_url):
 
         start = (sx, sy)
         end = (ex, ey)
-        move_timeneeded = (ey - sy + ex - sx) * 0.1
+        move_timeneeded = (ey - sy + ex - sx) * 0.5
         if move_timeneeded < 0:
             move_timeneeded = -move_timeneeded
         print(move_timeneeded)
@@ -258,6 +307,17 @@ def main(backdrop_url):
         # Update cube position
         if mover is not None:
             cube_x, cube_y = mover.update()
+
+            # Record trajectory - only add if position changed significantly
+            current_pos = (round(cube_x), round(cube_y))
+            if current_pos != last_recorded_pos:
+                trajectory.append(current_pos)
+                last_recorded_pos = current_pos
+
+                # Limit trail length to prevent memory issues
+                if len(trajectory) > MAX_TRAIL_LENGTH:
+                    trajectory.pop(0)  # Remove oldest point
+
             if mover.done:
                 start_next_move(1)
 
@@ -266,9 +326,15 @@ def main(backdrop_url):
         if BG_PIXEL_BLEND:
             screen.blit(grid_overlay, (0, 0))
 
+        # Draw trajectory trail (subtle, behind the cube)
+        draw_trajectory(screen, trajectory, BOX_SIZE, TRAJECTORY_COLOR, TRAJECTORY_ALPHA)
+        print(trajectory)
+
         # Draw cube aligned to grid cells; cube_x/cube_y are floats in grid space
-        # We’ll subtract half cube size for better centering.
+        # We'll subtract half cube size for better centering.
         draw_cube(screen, cube_x - (CUBE_GRID_SIZE - 1.0) * 0.5, cube_y - (CUBE_GRID_SIZE - 1.0) * 0.5, cube_grid_size=CUBE_GRID_SIZE, height=2.0)
+        print("cube:")
+        print((cube_x, cube_y))
 
         pygame.display.flip()
 
