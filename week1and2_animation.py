@@ -20,17 +20,11 @@ CUBE_EDGE = (20, 20, 20)
 
 FPS = 60
 
-# How “pixelated” the cube should feel (shade blocks)
-FACE_BRIGHT = (240, 240, 240)
-FACE_DARK = (140, 140, 140)
-FACE_MID = (190, 190, 190)
-
 # Cube size in grid units (so it covers a few boxes)
 CUBE_GRID_SIZE = 1.0  # 1 box = 16 px
 
 # Cube movement tuning
 MOVE_LERP = True  # smooth within each step
-
 
 # -----------------------------
 # Helper: download + scale backdrop into pixelated grid
@@ -80,55 +74,8 @@ def blend_pixelated_backdrop(surf_pixelated):
 # Cube rendering (simple isometric-ish block)
 # -----------------------------
 def draw_cube(screen, grid_x, grid_y, cube_grid_size=1.0, height=2.0):
-    """
-    Draws a cube centered on grid position (grid_x, grid_y) in screen space.
-    We render a stylized 3-face cube using simple shading blocks.
-
-    grid_x, grid_y are in grid units (0..49).
-    height controls the “stacked” feel (in boxes).
-    """
-    # Place cube base at the top-left corner of the box cell.
-    # We’ll treat (grid_x, grid_y) as the cell origin.
-    px = grid_x * BOX_SIZE
-    py = grid_y * BOX_SIZE
-
-    s = cube_grid_size * BOX_SIZE
-    # “height” in pixels
-    h = height * (BOX_SIZE * 0.35)  # stylized
-
-    # Iso projection (simple): top face offset & side faces
-    # Tune offsets for your aesthetic:
-    off_x = BOX_SIZE * 0.35
-    off_y = BOX_SIZE * 0.20
-
-    # Define key points
-    # Base corners (projected)
-    # We'll create a diamond-like top and then sides downward.
-    top = [
-        (px + off_x, py),                 # top-left
-        (px + s + off_x, py),             # top-right
-        (px + s + off_x + off_x, py + off_y),  # top-far-right
-        (px + off_x + off_x, py + off_y)      # top-far-left
-    ]
-
-    # Bottom corners are top corners moved down by h
-    bottom = [(x, y + h) for (x, y) in top]
-
-    # Faces:
-    # We'll approximate faces by polygons:
-    face_top = [top[0], top[1], top[2], top[3]]
-    face_left = [top[0], top[3], bottom[3], bottom[0]]
-    face_right = [top[1], top[2], bottom[2], bottom[1]]
-
-    # Draw order: left, right, top (or top last for nicer overlap)
-    #pygame.draw.polygon(screen, FACE_DARK, face_left)
-    #pygame.draw.polygon(screen, FACE_MID, face_right)
-    #pygame.draw.polygon(screen, FACE_BRIGHT, face_top)
-
-    # Edges
-    #pygame.draw.polygon(screen, CUBE_EDGE, face_top, 1)
-    #pygame.draw.polygon(screen, CUBE_EDGE, face_left, 1)
-    #pygame.draw.polygon(screen, CUBE_EDGE, face_right, 1)
+    px = math.ceil(grid_x) * BOX_SIZE
+    py = math.ceil(grid_y) * BOX_SIZE
     pygame.draw.rect(screen, (0, 255, 0), (px, py, 16, 16) )
 
 # -----------------------------
@@ -253,15 +200,15 @@ def main(backdrop_url):
     # Example path: a loop around the grid corners-ish
     # You can replace this with your own path.
     path = [
-        (5, 5), (45, 5), (45, 45), (5, 45), (5, 5),
-        (25, 10), (40, 30), (10, 35), (25, 20)
+        (40, 92), (30, 92), (30, 55), (35, 55), 
+        (35, 40), (30, 40), (30, 92), (40, 92)
     ]
 
     path_index = 0
     mover = None
 
     # Create first mover (move from current to next)
-    def start_next_move():
+    def start_next_move(speed):
         nonlocal path_index, mover
         start = path[path_index]
         end = path[(path_index + 1) % len(path)]
@@ -279,13 +226,13 @@ def main(backdrop_url):
         mover = move_cube_line(
             start_cell=start,
             end_cell=end,
-            time_per_move=1.25,      # seconds
-            steps_per_second=12,
+            time_per_move=4,      # seconds
+            steps_per_second=speed,
             grid_snap=False
         )
         path_index = (path_index + 1) % len(path)
 
-    start_next_move()
+    start_next_move(1)
 
     # Precompute a faint grid overlay for "pixelated environment"
     grid_overlay = pygame.Surface((SCREEN_W, SCREEN_H), pygame.SRCALPHA)
@@ -304,32 +251,11 @@ def main(backdrop_url):
             if event.type == pygame.QUIT:
                 running = False
 
-            # Optional: space triggers a random move
-            if event.type == pygame.KEYDOWN:
-                if event.key == pygame.K_SPACE:
-                    # start random destination
-                    sx = int(round(cube_x))
-                    sy = int(round(cube_y))
-                    ex = pygame.random.randint(0, GRID_W - 1) if hasattr(pygame, "random") else None
-
-                    # pygame.random doesn't exist in vanilla pygame; fallback:
-                    if ex is None:
-                        ex = pygame.math.Vector2(0, 0).x  # dummy
-                    # Use Python's random safely
-                    import random
-                    ex = random.randint(0, GRID_W - 1)
-                    ey = random.randint(0, GRID_H - 1)
-                    ex = max(0, min(GRID_W - 1, ex))
-                    ey = max(0, min(GRID_H - 1, ey))
-                    start = (max(0, min(GRID_W - 1, sx)), max(0, min(GRID_H - 1, sy)))
-                    end = (ex, ey)
-                    mover = move_cube_line(start, end, time_per_move=1.0, steps_per_second=12, grid_snap=False)
-
         # Update cube position
         if mover is not None:
             cube_x, cube_y = mover.update()
             if mover.done:
-                start_next_move()
+                start_next_move(1)
 
         # Draw
         screen.blit(pixel_bg, (0, 0))
