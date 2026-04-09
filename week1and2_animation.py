@@ -35,8 +35,8 @@ MODE_RECORD = "record"
 MODE_PLAYBACK = "playback"
 
 # Movement speed (cells per second)
-MOVE_SPEED = 8.0
-PLAYBACK_SPEEDUP_FACTOR = 1.12
+MOVE_SPEED = 24.0
+PLAYBACK_SPEEDUP_FACTOR = 1.35
 
 # -----------------------------
 # Color along path (cube vs lighter trail)
@@ -133,6 +133,7 @@ def load_backdrop_from_url(url, w_boxes, h_boxes, box_size):
             sx = gx * box_size + box_size // 2
             sy = gy * box_size + box_size // 2
             color = smooth.get_at((sx, sy))
+            color = (color.r / 1.2, color.g / 1.2, color.b / 1.2)
             rect = pygame.Rect(gx * box_size, gy * box_size, box_size, box_size)
             pygame.draw.rect(pixelated, color, rect)
 
@@ -272,7 +273,7 @@ def main(backdrop_url):
     mode = MODE_RECORD
     
     # Recording state
-    cube_cell = (40, 90)
+    cube_cell = (34, 93)
     cube_x, cube_y = float(cube_cell[0]), float(cube_cell[1])
     recorded_path = [cube_cell]  # Start with initial position
     current_mover = None
