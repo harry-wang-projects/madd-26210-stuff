@@ -2,6 +2,7 @@ import pygame
 import sys
 import math
 import time
+import colorsys
 from io import BytesIO
 import requests
 
@@ -23,9 +24,10 @@ FPS = 60
 # Cube size in grid units
 CUBE_GRID_SIZE = 2.0
 
-# Trajectory settings
-TRAJECTORY_COLOR = (100, 255, 100)
+# Trajectory settings (per-point colors; trail is lightened cube color)
 TRAJECTORY_ALPHA = 180
+TRAIL_LIGHTEN = 0.42  # blend toward white vs cube color at same point
+INNER_LIGHTEN = 0.28  # center highlight vs outer face
 MAX_TRAIL_LENGTH = 2000
 
 # Mode constants
@@ -34,6 +36,80 @@ MODE_PLAYBACK = "playback"
 
 # Movement speed (cells per second)
 MOVE_SPEED = 8.0
+
+# -----------------------------
+# Color along path (cube vs lighter trail)
+# -----------------------------
+def cube_color_at_index(i, num_points):
+    """Gradual hue sweep along the path; i in [0, num_points-1]."""
+    if num_points <= 1:
+        t = 0.0
+    else:
+        t = i / (num_points - 1)
+    # Full hue range, avoid pure red at both ends
+    h = (t * 0.92 + 0.02) % 1.0
+    r, g, b = colorsys.hsv_to_rgb(h, 0.78, 0.96)
+    return (int(r * 255), int(g * 255), int(b * 255))
+
+
+def lighten_rgb(rgb, amount):
+    """Blend rgb toward white; amount in [0, 1]."""
+    r, g, b = rgb
+    return (
+        int(r + (255 - r) * amount),
+        int(g + (255 - g) * amount),
+        int(b + (255 - b) * amount),
+    )
+
+
+def lerp_color(c0, c1, t):
+    t = max(0.0, min(1.0, t))
+    return (
+        int(c0[0] + (c1[0] - c0[0]) * t),
+        int(c0[1] + (c1[1] - c0[1]) * t),
+        int(c0[2] + (c1[2] - c0[2]) * t),
+    )
+
+
+def snapshot_cube_color(
+    mode,
+    recorded_path,
+    current_mover,
+    playback_mover,
+    playback_index,
+):
+    """Cube color at the current pose (interpolated along the active segment)."""
+    n = len(recorded_path)
+    if n == 0:
+        return cube_color_at_index(0, 1)
+    if mode == MODE_RECORD:
+        if current_mover is not None and not current_mover.done:
+            n_seg = n + 1
+            i0 = n - 1
+            i1 = n
+            c0 = cube_color_at_index(i0, n_seg)
+            c1 = cube_color_at_index(i1, n_seg)
+            return lerp_color(c0, c1, current_mover.get_progress())
+        return cube_color_at_index(n - 1, n)
+    # playback
+    if playback_mover is not None and not playback_mover.done:
+        i0 = playback_index
+        i1 = playback_index + 1
+        c0 = cube_color_at_index(i0, n)
+        c1 = cube_color_at_index(i1, n)
+        return lerp_color(c0, c1, playback_mover.get_progress())
+    return cube_color_at_index(min(playback_index, n - 1), n)
+
+
+def path_to_trajectory_draw_list(path_cells, num_points_for_color):
+    """List of (gx, gy, trail_rgb) matching cube colors at each vertex, lighter."""
+    out = []
+    for i, (gx, gy) in enumerate(path_cells):
+        cc = cube_color_at_index(i, num_points_for_color)
+        tr = lighten_rgb(cc, TRAIL_LIGHTEN)
+        out.append((gx, gy, tr))
+    return out
+
 
 # -----------------------------
 # Helper: download + scale backdrop into pixelated grid
@@ -69,42 +145,34 @@ def blend_pixelated_backdrop(surf_pixelated):
 # -----------------------------
 # Cube rendering
 # -----------------------------
-def draw_cube(screen, grid_x, grid_y, cube_grid_size=1.0, height=2.0):
+def draw_cube(screen, grid_x, grid_y, color, cube_grid_size=1.0, height=2.0):
     px = math.ceil(grid_x) * BOX_SIZE
     py = math.ceil(grid_y) * BOX_SIZE
-    pygame.draw.rect(screen, (0, 200, 100), (px, py, BOX_SIZE*2, BOX_SIZE*2))
-    # Add a bright center for visibility
-    pygame.draw.rect(screen, (150, 255, 150), (px+2, py+2, BOX_SIZE*2-4, BOX_SIZE*2-4))
+    inner = lighten_rgb(color, INNER_LIGHTEN)
+    pygame.draw.rect(screen, color, (px, py, BOX_SIZE * 2, BOX_SIZE * 2))
+    pygame.draw.rect(screen, inner, (px + 2, py + 2, BOX_SIZE * 2 - 4, BOX_SIZE * 2 - 4))
 
 
 # -----------------------------
 # Trajectory rendering
 # -----------------------------
-def draw_trajectory(screen, trajectory_points, box_size, color, alpha):
+def draw_trajectory(screen, trajectory_points, box_size, alpha):
     """
-    Draw the trajectory trail - only draws the provided points.
-    During playback, we only pass the revealed portion.
+    Draw the trajectory trail. Each item is (gx, gy, trail_rgb) where trail_rgb
+    is lighter than the cube color at that vertex.
     """
     if len(trajectory_points) < 1:
         return
 
     trail_surface = pygame.Surface((SCREEN_W, SCREEN_H), pygame.SRCALPHA)
-    
-    for i, (gx, gy) in enumerate(trajectory_points):
-        # Fade older points
-        #age_ratio = i / len(trajectory_points) if len(trajectory_points) > 1 else 1.0
-        #point_alpha = int(alpha * (0.3 + 0.7 * age_ratio))
-        
+
+    for gx, gy, trail_rgb in trajectory_points:
         px = int(gx * box_size)
         py = int(gy * box_size)
-        
-        size = max(2, box_size - 2)
-        offset = (box_size - size) // 2
         rect = pygame.Rect(px, py, box_size * 2, box_size * 2)
-        
-        #faded_color = (*color, point_alpha)
-        pygame.draw.rect(trail_surface, color, rect)
-    
+        rgba = (*trail_rgb, alpha)
+        pygame.draw.rect(trail_surface, rgba, rect)
+
     screen.blit(trail_surface, (0, 0))
 
 
@@ -329,8 +397,8 @@ def main(backdrop_url):
             screen.blit(grid_overlay, (0, 0))
 
         if mode == MODE_RECORD:
-            # Draw full recorded path so far (semi-transparent)
-            draw_trajectory(screen, recorded_path, BOX_SIZE, (100, 100, 255), 80)
+            trail_draw = path_to_trajectory_draw_list(recorded_path, len(recorded_path))
+            draw_trajectory(screen, trail_draw, BOX_SIZE, TRAJECTORY_ALPHA)
             
             # Instructions
             text = font.render("RECORD MODE - Arrows to move | SPACE to playback", True, (255, 255, 255))
@@ -340,8 +408,10 @@ def main(backdrop_url):
             screen.blit(points_text, (10, 30))
             
         elif mode == MODE_PLAYBACK:
-            # Only draw revealed trajectory (the slow reveal effect)
-            draw_trajectory(screen, revealed_trajectory, BOX_SIZE, TRAJECTORY_COLOR, TRAJECTORY_ALPHA)
+            trail_draw = path_to_trajectory_draw_list(
+                revealed_trajectory, len(recorded_path)
+            )
+            draw_trajectory(screen, trail_draw, BOX_SIZE, TRAJECTORY_ALPHA)
             
             # Instructions
             if playback_mover is None and playback_index >= len(recorded_path) - 1:
@@ -354,10 +424,16 @@ def main(backdrop_url):
             prog_text = font.render(f"Progress: {progress}%", True, (255, 255, 255))
             screen.blit(prog_text, (10, 30))
 
-        # Draw cube
-        draw_cube(screen, cube_x - (CUBE_GRID_SIZE - 1.0) * 0.5, 
-                 cube_y - (CUBE_GRID_SIZE - 1.0) * 0.5, 
-                 cube_grid_size=CUBE_GRID_SIZE)
+        cube_color = snapshot_cube_color(
+            mode, recorded_path, current_mover, playback_mover, playback_index
+        )
+        draw_cube(
+            screen,
+            cube_x - (CUBE_GRID_SIZE - 1.0) * 0.5,
+            cube_y - (CUBE_GRID_SIZE - 1.0) * 0.5,
+            cube_color,
+            cube_grid_size=CUBE_GRID_SIZE,
+        )
 
         pygame.display.flip()
 
