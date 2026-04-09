@@ -36,6 +36,7 @@ MODE_PLAYBACK = "playback"
 
 # Movement speed (cells per second)
 MOVE_SPEED = 8.0
+PLAYBACK_SPEEDUP_FACTOR = 1.12
 
 # -----------------------------
 # Color along path (cube vs lighter trail)
@@ -282,6 +283,8 @@ def main(backdrop_url):
     playback_mover = None
     revealed_trajectory = []  # Only the portion revealed so far
     last_revealed_pos = None
+    playback_loop_count = 0
+    playback_speed = MOVE_SPEED
     
     running = True
 
@@ -302,6 +305,8 @@ def main(backdrop_url):
                 if event.key == pygame.K_SPACE:
                     if mode == MODE_RECORD and len(recorded_path) > 1:
                         mode = MODE_PLAYBACK
+                        playback_loop_count = 0
+                        playback_speed = MOVE_SPEED
                         playback_index = 0
                         revealed_trajectory = [recorded_path[0]]
                         last_revealed_pos = recorded_path[0]
@@ -311,7 +316,7 @@ def main(backdrop_url):
                             playback_mover = LineMover(
                                 recorded_path[0], 
                                 recorded_path[1], 
-                                MOVE_SPEED
+                                playback_speed
                             )
                             playback_mover.begin()
                     elif mode == MODE_PLAYBACK:
@@ -385,11 +390,22 @@ def main(backdrop_url):
                         # Start next segment
                         start = recorded_path[playback_index]
                         end = recorded_path[playback_index + 1]
-                        playback_mover = LineMover(start, end, MOVE_SPEED)
+                        playback_mover = LineMover(start, end, playback_speed)
                         playback_mover.begin()
                     else:
-                        # Playback finished - loop or stop? Let's stop at end
-                        playback_mover = None
+                        # Playback finished - restart from beginning with faster speed
+                        playback_loop_count += 1
+                        playback_speed *= PLAYBACK_SPEEDUP_FACTOR
+                        playback_index = 0
+                        revealed_trajectory = [recorded_path[0]]
+                        last_revealed_pos = recorded_path[0]
+                        cube_x, cube_y = float(recorded_path[0][0]), float(recorded_path[0][1])
+                        playback_mover = LineMover(
+                            recorded_path[0],
+                            recorded_path[1],
+                            playback_speed
+                        )
+                        playback_mover.begin()
 
         # DRAWING
         screen.blit(pixel_bg, (0, 0))
@@ -414,14 +430,15 @@ def main(backdrop_url):
             draw_trajectory(screen, trail_draw, BOX_SIZE, TRAJECTORY_ALPHA)
             
             # Instructions
-            if playback_mover is None and playback_index >= len(recorded_path) - 1:
-                text = font.render("PLAYBACK COMPLETE - SPACE to record again", True, (255, 255, 255))
-            else:
-                text = font.render("PLAYBACK MODE - SPACE to restart", True, (255, 255, 255))
+            text = font.render("PLAYBACK MODE (looping) - SPACE to record again", True, (255, 255, 255))
             screen.blit(text, (10, 10))
             
             progress = min(100, int(100 * (playback_index + 1) / max(1, len(recorded_path) - 1)))
-            prog_text = font.render(f"Progress: {progress}%", True, (255, 255, 255))
+            prog_text = font.render(
+                f"Loop: {playback_loop_count + 1}  Speed: {playback_speed:.2f}  Progress: {progress}%",
+                True,
+                (255, 255, 255),
+            )
             screen.blit(prog_text, (10, 30))
 
         cube_color = snapshot_cube_color(
